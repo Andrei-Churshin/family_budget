@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Семейный бюджет (Kalkan)</title>
+    <!-- Подключаем клиент Supabase для работы с облаком -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         body { background-color: #0f172a; color: #f3f4f6; padding: 16px; min-height: 100vh; }
@@ -43,10 +45,9 @@
         .del-btn { background: #334155; color: #94a3b8; border: none; padding: 4px 8px; border-radius: 8px; font-size: 11px; cursor: pointer; }
         .del-btn:hover { background: #ef4444; color: #ffffff; }
         
-        /* Стили для блока облачной синхронизации */
-        .sync-panel { background: #1e293b; border: 1px dashed #475569; border-radius: 16px; padding: 16px; margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
-        .sync-btn { background: #8b5cf6; color: white; border: none; padding: 10px 14px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 500; }
-        .sync-btn:hover { background: #7c3aed; }
+        .sync-panel { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 16px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+        .cloud-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #34d399; font-weight: 500; }
+        .dot { width: 8px; height: 8px; background: #34d399; border-radius: 50%; box-shadow: 0 0 8px #34d399; }
     </style>
 </head>
 <body>
@@ -55,23 +56,18 @@
         <header>
             <div>
                 <h1>Семейный бюджет (Kalkan)</h1>
-                <p class="sub">Учет в Рублях (₽) и Лирах (₺)</p>
+                <p class="sub">Учет в Рублях (₽) и Лирах (₺) • Облачная синхронизация</p>
             </div>
             <button class="btn-success" onclick="exportCSV()">Скачать отчет (CSV)</button>
         </header>
 
-        <!-- ПАНЕЛЬ СИНХРОНИЗАЦИИ ЧЕРЕЗ ТЕЛИК -->
+        <!-- ИНДИКАТОР ОБЛАКА -->
         <div class="sync-panel">
-            <div style="flex: 1; min-width: 200px;">
-                <label style="color: #a78bfa;">⚙️ TG Токен Бота</label>
-                <input type="password" id="tg-token" placeholder="123456:ABCdef..." style="border-color: #4c1d95;">
+            <div class="cloud-status">
+                <div class="dot"></div>
+                <span>База данных Supabase подключена (синхронизация активна)</span>
             </div>
-            <div style="flex: 1; min-width: 150px;">
-                <label style="color: #a78bfa;">🆔 Ваш Chat ID</label>
-                <input type="text" id="tg-chat" placeholder="987654321" style="border-color: #4c1d95;">
-            </div>
-            <button class="sync-btn" onclick="uploadToCloud()">☁️ Отправить в облако</button>
-            <button class="sync-btn" style="background: #0284c7;" onclick="downloadFromCloud()">🔄 Скачать из облака</button>
+            <button class="sync-btn" style="background: #334155; color: #f3f4f6; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px;" onclick="loadTransactions()">🔄 Обновить данные</button>
         </div>
 
         <div class="grid-2">
@@ -149,7 +145,7 @@
                         <label>Сумма</label>
                         <input type="number" id="amount" placeholder="0" step="any">
                     </div>
-                    <button class="btn-primary" onclick="addTransaction()">Добавить</button>
+                    <button class="btn-primary" onclick="addTransaction()">Добавить в облако</button>
                 </div>
             </div>
 
@@ -165,7 +161,9 @@
                                 <th>Действие</th>
                             </tr>
                         </thead>
-                        <tbody id="transaction-rows"></tbody>
+                        <tbody id="transaction-rows">
+                            <tr><td colspan="4" style="text-align: center; color: #94a3b8;">Загрузка данных из облака...</td></tr>
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -173,184 +171,147 @@
     </div>
 
     <script>
-        // Инициализируем массив данных из памяти браузера или создаем пустой
-let transactions = JSON.parse(localStorage.getItem('budget_data')) || [];
+        // Инициализация Supabase
+        const SUPABASE_URL = 'https://uvsrkmmmlqmuyhqamxgc.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_vmhbaeXRMJruH2ae2bKl0A_7ghbkNGs';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Восстановление настроек синхронизации из памяти браузера
-if (document.getElementById('tg-token') && document.getElementById('tg-chat')) {
-    document.getElementById('tg-token').value = localStorage.getItem('tg_token') || '';
-    document.getElementById('tg-chat').value = localStorage.getItem('tg_chat') || '';
-}
+        let transactions = [];
 
-// Функция форматирования даты (ДД.ММ.ГГГГ ЧЧ:ММ)
-function formatDate(dateStr) {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-}
+        function formatDate(dateStr) {
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+        }
 
-// Обновление интерфейса (пересчет карточек и перерисовка таблицы)
-function updateUI() {
-    let stats = { RUB: { income: 0, expense: 0 }, TRY: { income: 0, expense: 0 } };
-    const tbody = document.getElementById('transaction-rows');
-    if (!tbody) return;
-    tbody.innerHTML = '';
+        // Перерисовка интерфейса
+        function updateUI() {
+            let stats = { RUB: { income: 0, expense: 0 }, TRY: { income: 0, expense: 0 } };
+            const tbody = document.getElementById('transaction-rows');
+            if (!tbody) return;
+            tbody.innerHTML = '';
 
-    // Считаем суммы и наполняем таблицу с конца (новые сверху)
-    transactions.slice().reverse().forEach((t, index) => {
-        const actualIndex = transactions.length - 1 - index;
-        stats[t.currency][t.type] += Number(t.amount);
+            if (transactions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #94a3b8;">Нет операций</td></tr>';
+            }
 
-        const tr = document.createElement('tr');
-        const isInc = t.type === 'income';
-        const sign = isInc ? '+' : '-';
-        const badgeClass = isInc ? 'badge inc' : 'badge exp';
-        const typeText = isInc ? 'Доход' : 'Расход';
-        const currencySign = t.currency === 'RUB' ? '₽' : '₺';
+            transactions.forEach((t) => {
+                stats[t.currency][t.type] += Number(t.amount);
 
-        tr.innerHTML = `
-            <td>
-                <div style="font-weight: 500;">${t.category}</div>
-                <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">${formatDate(t.date)}</div>
-            </td>
-            <td><span class="${badgeClass}">${typeText}</span></td>
-            <td style="font-weight: 600; color: ${isInc ? '#34d399' : '#f87171'}">${sign} ${Number(t.amount).toLocaleString('ru-RU')} ${currencySign}</td>
-            <td><button class="del-btn" onclick="deleteTransaction(${actualIndex})">Удалить</button></td>
-        `;
-        tbody.appendChild(tr);
-    });
+                const tr = document.createElement('tr');
+                const isInc = t.type === 'income';
+                const sign = isInc ? '+' : '-';
+                const badgeClass = isInc ? 'badge inc' : 'badge exp';
+                const typeText = isInc ? 'Доход' : 'Расход';
+                const currencySign = t.currency === 'RUB' ? '₽' : '₺';
 
-    // Обновляем виджеты баланса рубли
-    if(document.getElementById('rub-income')) document.getElementById('rub-income').innerText = stats.RUB.income.toLocaleString('ru-RU') + ' ₽';
-    if(document.getElementById('rub-expense')) document.getElementById('rub-expense').innerText = stats.RUB.expense.toLocaleString('ru-RU') + ' ₽';
-    if(document.getElementById('rub-balance')) document.getElementById('rub-balance').innerText = (stats.RUB.income - stats.RUB.expense).toLocaleString('ru-RU') + ' ₽';
+                tr.innerHTML = `
+                    <td>
+                        <div style="font-weight: 500;">${t.category}</div>
+                        <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">${formatDate(t.date)}</div>
+                    </td>
+                    <td><span class="${badgeClass}">${typeText}</span></td>
+                    <td style="font-weight: 600; color: ${isInc ? '#34d399' : '#f87171'}">${sign} ${Number(t.amount).toLocaleString('ru-RU')} ${currencySign}</td>
+                    <td><button class="del-btn" onclick="deleteTransaction(${t.id})">Удалить</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
 
-    // Обновляем виджеты баланса лиры
-    if(document.getElementById('try-income')) document.getElementById('try-income').innerText = stats.TRY.income.toLocaleString('ru-RU') + ' ₺';
-    if(document.getElementById('try-expense')) document.getElementById('try-expense').innerText = stats.TRY.expense.toLocaleString('ru-RU') + ' ₺';
-    if(document.getElementById('try-balance')) document.getElementById('try-balance').innerText = (stats.TRY.income - stats.TRY.expense).toLocaleString('ru-RU') + ' ₺';
+            if(document.getElementById('rub-income')) document.getElementById('rub-income').innerText = stats.RUB.income.toLocaleString('ru-RU') + ' ₽';
+            if(document.getElementById('rub-expense')) document.getElementById('rub-expense').innerText = stats.RUB.expense.toLocaleString('ru-RU') + ' ₽';
+            if(document.getElementById('rub-balance')) document.getElementById('rub-balance').innerText = (stats.RUB.income - stats.RUB.expense).toLocaleString('ru-RU') + ' ₽';
 
-    // Сохраняем актуальные данные в память
-    localStorage.setItem('budget_data', JSON.stringify(transactions));
-    
-    // Сохраняем ключи синхронизации
-    if (document.getElementById('tg-token') && document.getElementById('tg-chat')) {
-        localStorage.setItem('tg_token', document.getElementById('tg-token').value);
-        localStorage.setItem('tg_chat', document.getElementById('tg-chat').value);
-    }
-}
+            if(document.getElementById('try-income')) document.getElementById('try-income').innerText = stats.TRY.income.toLocaleString('ru-RU') + ' ₺';
+            if(document.getElementById('try-expense')) document.getElementById('try-expense').innerText = stats.TRY.expense.toLocaleString('ru-RU') + ' ₺';
+            if(document.getElementById('try-balance')) document.getElementById('try-balance').innerText = (stats.TRY.income - stats.TRY.expense).toLocaleString('ru-RU') + ' ₺';
+        }
 
-// Функция добавления новой транзакции
-function addTransaction() {
-    const amountInput = document.getElementById('amount');
-    if (!amountInput) return;
-    const amount = parseFloat(amountInput.value);
+        // Загрузка данных из Supabase
+        async function loadTransactions() {
+            const { data, error } = await supabaseClient
+                .from('transactions')
+                .select('*')
+                .order('id', { ascending: false });
 
-    if (isNaN(amount) || amount <= 0) { 
-        alert('Введите сумму!'); 
-        return; 
-    }
+            if (error) {
+                console.error('Ошибка загрузки:', error);
+                alert('Не удалось загрузить данные из облака.');
+                return;
+            }
 
-    transactions.push({
-        type: document.getElementById('type').value,
-        currency: document.getElementById('currency').value,
-        category: document.getElementById('category').value,
-        amount: amount,
-        date: new Date().toISOString()
-    });
+            transactions = data || [];
+            updateUI();
+        }
 
-    amountInput.value = '';
-    updateUI();
-}
+        // Добавление транзакции в облако
+        async function addTransaction() {
+            const amountInput = document.getElementById('amount');
+            if (!amountInput) return;
+            const amount = parseFloat(amountInput.value);
 
-// Функция удаления транзакции
-function deleteTransaction(index) {
-    if (confirm('Удалить операцию?')) { 
-        transactions.splice(index, 1); 
-        updateUI(); 
-    }
-}
+            if (isNaN(amount) || amount <= 0) {
+                alert('Введите сумму!');
+                return;
+            }
 
-// --- ЛОГИКА ОБЛАЧНОЙ СИНХРОНИЗАЦИИ ---
-async function uploadToCloud() {
-    const token = document.getElementById('tg-token').value;
-    const chat = document.getElementById('tg-chat').value;
-    if(!token || !chat) { alert('Заполните Токен и Chat ID!'); return; }
+            const newRecord = {
+                type: document.getElementById('type').value,
+                currency: document.getElementById('currency').value,
+                category: document.getElementById('category').value,
+                amount: amount,
+                date: new Date().toISOString()
+            };
 
-    const dataStr = JSON.stringify(transactions);
-    const blob = new Blob([dataStr], {type: 'application/json'});
-    const formData = new FormData();
-    formData.append('chat_id', chat);
-    formData.append('document', blob, 'budget_backup.json');
-    formData.append('caption', '#kalkan_backup\nРезервная копия данных бюджета.');
+            const { error } = await supabaseClient
+                .from('transactions')
+                .insert([newRecord]);
 
-    try {
-        let response = await fetch(`https://telegram.org{token}/sendDocument`, { method: 'POST', body: formData });
-        if(response.ok) alert('✅ Данные успешно выгружены в облако Telegram!');
-        else alert('❌ Ошибка отправки. Проверьте Токен и Chat ID.');
-    } catch(e) { alert('Ошибка сети.'); }
-}
+            if (error) {
+                console.error('Ошибка добавления:', error);
+                alert('Ошибка при сохранении в облако.');
+                return;
+            }
 
-async function downloadFromCloud() {
-    const token = document.getElementById('tg-token').value;
-    const chat = document.getElementById('tg-chat').value;
-    if(!token || !chat) { alert('Заполните Токен и Chat ID!'); return; }
+            amountInput.value = '';
+            loadTransactions(); // Перезагружаем актуальный список с сервера
+        }
 
-    try {
-        // Ищем последнее сообщение в чате бота
-        let res = await fetch(`https://telegram.org{token}/getUpdates?offset=-1`);
-        let json = await res.json();
-        let doc = null;
+        // Удаление транзакции из облака
+        async function deleteTransaction(id) {
+            if (confirm('Удалить операцию?')) {
+                const { error } = await supabaseClient
+                    .from('transactions')
+                    .delete()
+                    .eq('id', id);
 
-        // Ищем файл с нашим хэштегом в истории
-        if (json.result && json.result.length > 0) {
-            const msg = json.result[0].message || json.result[0].channel_post;
-            if (msg && msg.document && msg.caption && msg.caption.includes('#kalkan_backup')) {
-                doc = msg.document;
+                if (error) {
+                    console.error('Ошибка удаления:', error);
+                    alert('Не удалось удалить запись.');
+                    return;
+                }
+
+                loadTransactions();
             }
         }
 
-        if(!doc) {
-            alert('Записей не найдено. Напишите боту любое сообщение или сначала нажмите "Отправить в облако" с устройства, где есть данные.');
-            return;
+        function exportCSV() {
+            if (transactions.length === 0) { alert('Нет данных.'); return; }
+            let csvContent = "Дата;Категория;Тип;Сумма;Валюта\n";
+           
+            transactions.forEach(t => {
+                csvContent += `${formatDate(t.date)};${t.category};${t.type === 'income' ? 'Доход' : 'Расход'};${t.amount};${t.currency}\n`;
+            });
+
+            const blob = new Blob([window.atob('77u/') + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.setAttribute("href", URL.createObjectURL(blob));
+            link.setAttribute("download", "kalkan_budget.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
-        // Получаем прямую ссылку на скачивание
-        let fileRes = await fetch(`https://telegram.org{token}/getFile?file_id=${doc.file_id}`);
-        let fileJson = await fileRes.json();
-        let filePath = fileJson.result.file_path;
-
-        let dataRes = await fetch(`https://telegram.org{token}/${filePath}`);
-        let cloudData = await dataRes.json();
-
-        if(Array.isArray(cloudData)) {
-            if(confirm(`Найдено ${cloudData.length} операций. Заменить текущие локальные данные?`)) {
-                transactions = cloudData;
-                updateUI();
-                alert('🔄 Данные успешно синхронизированы!');
-            }
-        }
-    } catch(e) { 
-        alert('Ошибка скачивания. Убедитесь, что бот активирован (нажмите /start в самом Telegram).'); 
-    }
-}
-
-// Экспорт в формате CSV
-function exportCSV() {
-    if (transactions.length === 0) { alert('Нет данных.'); return; }
-    let csvContent = "Дата;Категория;Тип;Сумма;Валюта\n";
-    
-    transactions.forEach(t => {
-        csvContent += `${formatDate(t.date)};${t.category};${t.type === 'income' ? 'Доход' : 'Расход'};${t.amount};${t.currency}\n`;
-    });
-
-    const blob = new Blob([window.atob('77u/') + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.setAttribute("href", URL.createObjectURL(blob));
-    link.setAttribute("download", "kalkan_budget.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-// Первичный рендер при загрузке страницы
-updateUI();
+        // Загружаем данные при старте страницы
+        loadTransactions();
+    </script>
+</body>
+</html>
