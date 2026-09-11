@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Семейный бюджет (Kalkan)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        body { background-color: #0f172a; color: #f3f4f6; padding: 16px; min-height: 100vh; }
+        .container { max-width: 900px; margin: 0 auto; }
+        header { background: #1e293b; border-radius: 16px; padding: 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border: 1px solid #334155; }
+        h1 { font-size: 22px; font-weight: bold; color: #ffffff; }
+        p.sub { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; }
+        @media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+        .card { background: #1e293b; border-radius: 16px; padding: 20px; border: 1px solid #334155; }
+        .card h2 { font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 12px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+        .stat-box { background: #0f172a; padding: 12px 8px; border-radius: 12px; }
+        .stat-box.income { background: rgba(6, 78, 59, 0.4); border: 1px solid rgba(5, 150, 105, 0.3); }
+        .stat-box.expense { background: rgba(127, 29, 29, 0.4); border: 1px solid rgba(220, 38, 38, 0.3); }
+        .stat-label { font-size: 11px; color: #94a3b8; }
+        .stat-val { font-size: 14px; font-weight: bold; margin-top: 4px; color: #ffffff; }
+        .stat-val.inc { color: #34d399; }
+        .stat-val.exp { color: #f87171; }
+        .form-group { margin-bottom: 14px; }
+        label { display: block; font-size: 12px; font-weight: 500; color: #cbd5e1; margin-bottom: 6px; }
+        select, input { width: 100%; background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 10px 12px; font-size: 14px; color: #ffffff; outline: none; }
+        select:focus, input:focus { border-color: #3b82f6; }
+        button.btn-primary { width: 100%; background: #2563eb; color: #ffffff; border: none; padding: 12px; border-radius: 12px; font-weight: 500; font-size: 14px; cursor: pointer; transition: background 0.2s; }
+        button.btn-primary:hover { background: #1d4ed8; }
+        button.btn-success { background: #16a34a; color: #ffffff; border: none; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 500; cursor: pointer; }
+        button.btn-success:hover { background: #15803d; }
+        .table-wrap { overflow-x: auto; max-height: 400px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+        th { background: #0f172a; color: #94a3b8; padding: 10px; font-size: 11px; text-transform: uppercase; position: sticky; top: 0; }
+        td { padding: 12px 10px; border-bottom: 1px solid #334155; color: #e2e8f0; }
+        tr:hover { background: rgba(255, 255, 255, 0.02); }
+        .badge { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 999px; }
+        .badge.inc { background: rgba(5, 150, 105, 0.3); color: #34d399; }
+        .badge.exp { background: rgba(220, 38, 38, 0.3); color: #f87171; }
+        .del-btn { background: #334155; color: #94a3b8; border: none; padding: 4px 8px; border-radius: 8px; font-size: 11px; cursor: pointer; }
+        .del-btn:hover { background: #ef4444; color: #ffffff; }
+        
+        /* Стили для блока облачной синхронизации */
+        .sync-panel { background: #1e293b; border: 1px dashed #475569; border-radius: 16px; padding: 16px; margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .sync-btn { background: #8b5cf6; color: white; border: none; padding: 10px 14px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 500; }
+        .sync-btn:hover { background: #7c3aed; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <div>
+                <h1>Семейный бюджет (Kalkan)</h1>
+                <p class="sub">Учет в Рублях (₽) и Лирах (₺)</p>
+            </div>
+            <button class="btn-success" onclick="exportCSV()">Скачать отчет (CSV)</button>
+        </header>
+
+        <!-- ПАНЕЛЬ СИНХРОНИЗАЦИИ ЧЕРЕЗ ТЕЛИК -->
+        <div class="sync-panel">
+            <div style="flex: 1; min-width: 200px;">
+                <label style="color: #a78bfa;">⚙️ TG Токен Бота</label>
+                <input type="password" id="tg-token" placeholder="123456:ABCdef..." style="border-color: #4c1d95;">
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+                <label style="color: #a78bfa;">🆔 Ваш Chat ID</label>
+                <input type="text" id="tg-chat" placeholder="987654321" style="border-color: #4c1d95;">
+            </div>
+            <button class="sync-btn" onclick="uploadToCloud()">☁️ Отправить в облако</button>
+            <button class="sync-btn" style="background: #0284c7;" onclick="downloadFromCloud()">🔄 Скачать из облака</button>
+        </div>
+
+        <div class="grid-2">
+            <div class="card">
+                <h2>🇷🇺 Российский рубль (₽)</h2>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Баланс</div>
+                        <div id="rub-balance" class="stat-val">0 ₽</div>
+                    </div>
+                    <div class="stat-box income">
+                        <div class="stat-label">Доходы</div>
+                        <div id="rub-income" class="stat-val inc">0 ₽</div>
+                    </div>
+                    <div class="stat-box expense">
+                        <div class="stat-label">Расходы</div>
+                        <div id="rub-expense" class="stat-val exp">0 ₽</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>🇹🇷 Турецкая лира (₺)</h2>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Баланс</div>
+                        <div id="try-balance" class="stat-val">0 ₺</div>
+                    </div>
+                    <div class="stat-box income">
+                        <div class="stat-label">Доходы</div>
+                        <div id="try-income" class="stat-val inc">0 ₺</div>
+                    </div>
+                    <div class="stat-box expense">
+                        <div class="stat-label">Расходы</div>
+                        <div id="try-expense" class="stat-val exp">0 ₺</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-3">
+            <div class="card" style="height: fit-content;">
+                <h2>Новая операция</h2>
+                <div>
+                    <div class="form-group">
+                        <label>Тип операции</label>
+                        <select id="type">
+                            <option value="income">Пополнение (Доход)</option>
+                            <option value="expense">Списание (Расход)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Валюта</label>
+                        <select id="currency">
+                            <option value="RUB">Российский рубль (₽)</option>
+                            <option value="TRY">Турецкая лира (₺)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Категория</label>
+                        <select id="category">
+                            <option value="Зарплата">Зарплата</option>
+                            <option value="Пособие">Пособие</option>
+                            <option value="Подарок">Подарок</option>
+                            <option value="Продукты">Продукты</option>
+                            <option value="Учёба">Учёба</option>
+                            <option value="Аренда">Аренда</option>
+                            <option value="Коммуналка">Коммуналка</option>
+                            <option value="Досуг">Досуг</option>
+                            <option value="Здоровье">Здоровье</option>
+                            <option value="Прочее">Прочее</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Сумма</label>
+                        <input type="number" id="amount" placeholder="0" step="any">
+                    </div>
+                    <button class="btn-primary" onclick="addTransaction()">Добавить</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>История операций</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Категория / Дата</th>
+                                <th>Тип</th>
+                                <th>Сумма</th>
+                                <th>Действие</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transaction-rows"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Инициализируем массив данных из памяти браузера или создаем пустой
+let transactions = JSON.parse(localStorage.getItem('budget_data')) || [];
+
+// Восстановление настроек синхронизации из памяти браузера
+if (document.getElementById('tg-token') && document.getElementById('tg-chat')) {
+    document.getElementById('tg-token').value = localStorage.getItem('tg_token') || '';
+    document.getElementById('tg-chat').value = localStorage.getItem('tg_chat') || '';
+}
+
+// Функция форматирования даты (ДД.ММ.ГГГГ ЧЧ:ММ)
+function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+}
+
+// Обновление интерфейса (пересчет карточек и перерисовка таблицы)
+function updateUI() {
+    let stats = { RUB: { income: 0, expense: 0 }, TRY: { income: 0, expense: 0 } };
+    const tbody = document.getElementById('transaction-rows');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    // Считаем суммы и наполняем таблицу с конца (новые сверху)
+    transactions.slice().reverse().forEach((t, index) => {
+        const actualIndex = transactions.length - 1 - index;
+        stats[t.currency][t.type] += Number(t.amount);
+
+        const tr = document.createElement('tr');
+        const isInc = t.type === 'income';
+        const sign = isInc ? '+' : '-';
+        const badgeClass = isInc ? 'badge inc' : 'badge exp';
+        const typeText = isInc ? 'Доход' : 'Расход';
+        const currencySign = t.currency === 'RUB' ? '₽' : '₺';
+
+        tr.innerHTML = `
+            <td>
+                <div style="font-weight: 500;">${t.category}</div>
+                <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">${formatDate(t.date)}</div>
+            </td>
+            <td><span class="${badgeClass}">${typeText}</span></td>
+            <td style="font-weight: 600; color: ${isInc ? '#34d399' : '#f87171'}">${sign} ${Number(t.amount).toLocaleString('ru-RU')} ${currencySign}</td>
+            <td><button class="del-btn" onclick="deleteTransaction(${actualIndex})">Удалить</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    // Обновляем виджеты баланса рубли
+    if(document.getElementById('rub-income')) document.getElementById('rub-income').innerText = stats.RUB.income.toLocaleString('ru-RU') + ' ₽';
+    if(document.getElementById('rub-expense')) document.getElementById('rub-expense').innerText = stats.RUB.expense.toLocaleString('ru-RU') + ' ₽';
+    if(document.getElementById('rub-balance')) document.getElementById('rub-balance').innerText = (stats.RUB.income - stats.RUB.expense).toLocaleString('ru-RU') + ' ₽';
+
+    // Обновляем виджеты баланса лиры
+    if(document.getElementById('try-income')) document.getElementById('try-income').innerText = stats.TRY.income.toLocaleString('ru-RU') + ' ₺';
+    if(document.getElementById('try-expense')) document.getElementById('try-expense').innerText = stats.TRY.expense.toLocaleString('ru-RU') + ' ₺';
+    if(document.getElementById('try-balance')) document.getElementById('try-balance').innerText = (stats.TRY.income - stats.TRY.expense).toLocaleString('ru-RU') + ' ₺';
+
+    // Сохраняем актуальные данные в память
+    localStorage.setItem('budget_data', JSON.stringify(transactions));
+    
+    // Сохраняем ключи синхронизации
+    if (document.getElementById('tg-token') && document.getElementById('tg-chat')) {
+        localStorage.setItem('tg_token', document.getElementById('tg-token').value);
+        localStorage.setItem('tg_chat', document.getElementById('tg-chat').value);
+    }
+}
+
+// Функция добавления новой транзакции
+function addTransaction() {
+    const amountInput = document.getElementById('amount');
+    if (!amountInput) return;
+    const amount = parseFloat(amountInput.value);
+
+    if (isNaN(amount) || amount <= 0) { 
+        alert('Введите сумму!'); 
+        return; 
+    }
+
+    transactions.push({
+        type: document.getElementById('type').value,
+        currency: document.getElementById('currency').value,
+        category: document.getElementById('category').value,
+        amount: amount,
+        date: new Date().toISOString()
+    });
+
+    amountInput.value = '';
+    updateUI();
+}
+
+// Функция удаления транзакции
+function deleteTransaction(index) {
+    if (confirm('Удалить операцию?')) { 
+        transactions.splice(index, 1); 
+        updateUI(); 
+    }
+}
+
+// --- ЛОГИКА ОБЛАЧНОЙ СИНХРОНИЗАЦИИ ---
+async function uploadToCloud() {
+    const token = document.getElementById('tg-token').value;
+    const chat = document.getElementById('tg-chat').value;
+    if(!token || !chat) { alert('Заполните Токен и Chat ID!'); return; }
+
+    const dataStr = JSON.stringify(transactions);
+    const blob = new Blob([dataStr], {type: 'application/json'});
+    const formData = new FormData();
+    formData.append('chat_id', chat);
+    formData.append('document', blob, 'budget_backup.json');
+    formData.append('caption', '#kalkan_backup\nРезервная копия данных бюджета.');
+
+    try {
+        let response = await fetch(`https://telegram.org{token}/sendDocument`, { method: 'POST', body: formData });
+        if(response.ok) alert('✅ Данные успешно выгружены в облако Telegram!');
+        else alert('❌ Ошибка отправки. Проверьте Токен и Chat ID.');
+    } catch(e) { alert('Ошибка сети.'); }
+}
+
+async function downloadFromCloud() {
+    const token = document.getElementById('tg-token').value;
+    const chat = document.getElementById('tg-chat').value;
+    if(!token || !chat) { alert('Заполните Токен и Chat ID!'); return; }
+
+    try {
+        // Ищем последнее сообщение в чате бота
+        let res = await fetch(`https://telegram.org{token}/getUpdates?offset=-1`);
+        let json = await res.json();
+        let doc = null;
+
+        // Ищем файл с нашим хэштегом в истории
+        if (json.result && json.result.length > 0) {
+            const msg = json.result[0].message || json.result[0].channel_post;
+            if (msg && msg.document && msg.caption && msg.caption.includes('#kalkan_backup')) {
+                doc = msg.document;
+            }
+        }
+
+        if(!doc) {
+            alert('Записей не найдено. Напишите боту любое сообщение или сначала нажмите "Отправить в облако" с устройства, где есть данные.');
+            return;
+        }
+
+        // Получаем прямую ссылку на скачивание
+        let fileRes = await fetch(`https://telegram.org{token}/getFile?file_id=${doc.file_id}`);
+        let fileJson = await fileRes.json();
+        let filePath = fileJson.result.file_path;
+
+        let dataRes = await fetch(`https://telegram.org{token}/${filePath}`);
+        let cloudData = await dataRes.json();
+
+        if(Array.isArray(cloudData)) {
+            if(confirm(`Найдено ${cloudData.length} операций. Заменить текущие локальные данные?`)) {
+                transactions = cloudData;
+                updateUI();
+                alert('🔄 Данные успешно синхронизированы!');
+            }
+        }
+    } catch(e) { 
+        alert('Ошибка скачивания. Убедитесь, что бот активирован (нажмите /start в самом Telegram).'); 
+    }
+}
+
+// Экспорт в формате CSV
+function exportCSV() {
+    if (transactions.length === 0) { alert('Нет данных.'); return; }
+    let csvContent = "Дата;Категория;Тип;Сумма;Валюта\n";
+    
+    transactions.forEach(t => {
+        csvContent += `${formatDate(t.date)};${t.category};${t.type === 'income' ? 'Доход' : 'Расход'};${t.amount};${t.currency}\n`;
+    });
+
+    const blob = new Blob([window.atob('77u/') + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.setAttribute("href", URL.createObjectURL(blob));
+    link.setAttribute("download", "kalkan_budget.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Первичный рендер при загрузке страницы
+updateUI();
